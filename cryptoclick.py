@@ -1,100 +1,126 @@
-import os
 import sqlite3
+import os
 import time
+import asyncio
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-from telegram.ext import Application
-import logging
 
 load_dotenv()
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+TOKEN = os.getenv("BOT_TOKEN")
 
-conn = sqlite3.connect("game.db")
+conn = sqlite3.connect("game.db", check_same_thread=False)
 cur = conn.cursor()
-
 cur.execute("""
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS users(
     user_id INTEGER PRIMARY KEY,
-    coins INTEGER DEFAULT 0,
-    power INTEGER DEFAULT 1,
-    passive INTEGER DEFAULT 0,
-    last_bonus INTEGER DEFAULT 0
+    coins INTEGER,
+    power INTEGER,
+    passive INTEGER,
+    last_bonus INTEGER,
+    ref INTEGER,
+    premium_until INTEGER
 )
 """)
 conn.commit()
 
 def get_user(user_id):
-    user = cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+    user = cur.execute("SELECT * FROM users WHERE user_id=?",(user_id,)).fetchone()
     if not user:
-        cur.execute("INSERT INTO users VALUES (?, 0, 1, 0, 0)", (user_id,))
+        cur.execute(
+            "INSERT INTO users VALUES(?,?,?,?,?,?,?)",
+            (user_id, 0, 1, 0, 0, 0, 0)
+        )
         conn.commit()
-        user = cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
+        user = (user_id, 0, 1, 0, 0, 0, 0)
     return user
+
+def is_premium(user):
+    return user[6] > int(time.time())
 
 def menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(text="⛏ Майнить", callback_data="click")],
-        [InlineKeyboardButton(text="🎁 Бонус", callback_data="bonus")],
-        [InlineKeyboardButton(text="🛒 Магазин", callback_data="shop")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton(text="🏆 ТОП", callback_data="top")]
+        [InlineKeyboardButton("⛏ Майнить", callback_data="click")],
+        [InlineKeyboardButton("🎁 Бонус", callback_data="bonus")],
+        [InlineKeyboardButton("👥 Рефералы", callback_data="ref")],
+        [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
+        [InlineKeyboardButton("🏆 ТОП", callback_data="top")]
     ])
 
-async def start(update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    get_user(user_id)
-    await update.message.reply_text("🎮 Добро пожаловать в CryptoClick!", reply_markup=menu())
-
-async def callback_query(update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
-    user = get_user(user_id)
-
-    if data == "click":
-        coins = user[1] + user[2]
-        cur.execute("UPDATE users SET coins=? WHERE user_id=?", (coins, user_id))
+    ref = int(context.args[0]) if context.args else 0
+    user = cur.execute(
+        "SELECT * FROM users WHERE user_id=?",(user_id,)).fetchone()
+    if not user:
+        premium = 0
+        if ref != 0 and ref != user_id:
+            premium = int(time.time()) + 3*86400
+            cur.execute(
+                "UPDATE users SET coins = coins + 500 WHERE user_id=?",(ref,))
+        cur.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)",(user_id, 0, 1, 0, 0, ref, premium))
         conn.commit()
-        await query.edit_message_text(
-            f"⛏ +{user[2]} монет\n💰 Баланс: {coins}",
-            reply_markup=menu()
-        )
+    await update.message.reply_text(
+        "🎮 Добро пожаловать",
+        reply_markup=menu()
+    )
 
-    elif data == "bonus":
-        now = int(time.time())
-        last_bonus = user[4]
-        if now - last_bonus >= 86400:
-            reward = 100 + user[2] * 10
-            new_coins = user[1] + reward
-            cur.execute("UPDATE users SET coins=?, last_bonus=? WHERE user_id=?", (new_coins, now, user_id))
-            conn.commit()
-            await query.answer(f"🎁 Ты получил {reward} монет!")
-        else:
-            remaining = 86400 - (now - last_bonus)
-            hours = remaining // 3600
-            await query.answer(f"❌ Бонус через {hours} часов")
-        await query.edit_message_text("🎁 Бонус", reply_markup=menu())
+async def click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = get_user(query.from_user.id)
+    power = user[2]
+    if is_premium(user):
+        power *= 2
+    coins = user[1] + power
+    cur.execute(
+        "UPDATE users SET coins=? WHERE user_id=?",(coins, query.from_user.id))
+    conn.commit()
+    text = f"⛏ +{power} монет\n💰 Баланс: {coins}"
+    if is_premium(user):
+        text += "\n⭐ ПРЕМИУМ x2"
+    await query.edit_message_text(text, reply_markup=menu())
 
-    elif data == "profile":
-        await query.edit_message_text(
-            f"👤 Профиль\n\n"
-            f"Монеты: {user[1]}\n"
-            f"Сила: {user[2]}\n"
-            f"Пассив: {user[3]}\n",
-            reply_markup=menu()
-        )
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user = get_user(query.from_user.id)
+    text = (
+        f"👤 Профиль\n\n"
+        f"💰 Монеты: {user[1]}\n"
+        f"⚡ Клик: {user[2]}\n"
+        f"🤖 Роботы: {user[3]}\n"
+    )
+    if is_premium(user):
+        days = (user[6] - int(time.time())) // 86400
+        text += f"⭐ Премиум: {days} дн."
+    await query.edit_message_text(text, reply_markup=menu())
 
-def main():
-    TOKEN = os.getenv("BOT_TOKEN")
-    app = Application.builder().token(TOKEN).build()
+async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    link = f"https://t.me/{context.bot.username}?start={user_id}"
+    await query.edit_message_text(
+        f"👥 Твоя ссылка:\n{link}",
+        reply_markup=menu()
+    )
+
+async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    users = cur.execute("SELECT user_id, coins FROM users ORDER BY coins DESC LIMIT 10").fetchall()
+    text = "🏆 ТОП\n\n"
+    i = 1
+    for u in users:
+        text += f"{i}. {u[0]} — {u[1]} 💰\n"
+        i += 1
+    await query.edit_message_text(text, reply_markup=menu())
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_query))
-    print("бот работает")
+    app.add_handler(CallbackQueryHandler(click,"click"))
+    app.add_handler(CallbackQueryHandler(profile, pattern="profile"))
+    app.add_handler(CallbackQueryHandler(ref, pattern="ref"))
+    app.add_handler(CallbackQueryHandler(top, pattern="top"))
+    print("Bot started")
+    await app.run_polling()
 
-    app.run_polling(timeout=60)
-if __name__ == "__main__":
-    main()
+    if __name__ == "main":
+        main()
