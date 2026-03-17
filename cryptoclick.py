@@ -6,13 +6,10 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Создаем соединение с базой данных
 conn = sqlite3.connect("game.db")
 cur = conn.cursor()
 
-# Создаем таблицу, если не существует
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
@@ -24,7 +21,6 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# Получаем или создаем пользователя
 def get_user(user_id):
     user = cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
     if not user:
@@ -33,7 +29,6 @@ def get_user(user_id):
         user = cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
     return user
 
-# Создаем меню
 def menu():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(text="⛏ Майнить", callback_data="click")],
@@ -43,13 +38,11 @@ def menu():
         [InlineKeyboardButton(text="🏆 ТОП", callback_data="top")]
     ])
 
-# Стартовая команда
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     get_user(user_id)
     await update.message.reply_text("🎮 Добро пожаловать в CryptoClick!", reply_markup=menu())
 
-# Обработка нажатий
 async def callback_query(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -90,14 +83,12 @@ async def callback_query(update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 def main():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    TOKEN = os.getenv("BOT_TOKEN")
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(callback_query))
+    print("бот работает")
+    app.run_polling()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(callback_query))
-
-    # Запуск бота
-    application.run_polling()
-
-# Запуск
 if __name__ == "__main__":
     main()
