@@ -168,7 +168,7 @@ async def top(call: types.CallbackQuery):
 async def back(call: types.CallbackQuery):
     await call.message.edit_text("🎮 Меню", reply_markup=menu())
 
-#АВТОДОХОД 
+#АВТОДОХОД
 async def passive_income():
     while True:
         users = cur.execute(
