@@ -4,8 +4,14 @@ import time
 from dotenv import load_dotenv
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application
+import logging
 
 load_dotenv()
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
 conn = sqlite3.connect("game.db")
 cur = conn.cursor()
@@ -84,14 +90,11 @@ async def callback_query(update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     TOKEN = os.getenv("BOT_TOKEN")
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback_query))
     print("бот работает")
-    try:
-        app.run_polling(timeout=20)
-    except Exception as e:
-        print(f"Произошла ошибка: {e}")
 
+    app.run_polling(timeout=60)
 if __name__ == "__main__":
     main()
