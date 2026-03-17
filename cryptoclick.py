@@ -88,7 +88,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(callback_query))
     print("бот работает")
-    app.run_polling()
+    try:
+        app.run_polling(timeout=20)
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
 
 if __name__ == "__main__":
     main()
