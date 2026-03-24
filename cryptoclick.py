@@ -120,7 +120,7 @@ async def main():
     app.add_handler(CallbackQueryHandler(ref, pattern="ref"))
     app.add_handler(CallbackQueryHandler(top, pattern="top"))
     print("Bot started")
-    await app.run_polling()
-
+    app.run_polling()
+    
     if __name__ == "main":
         main()
