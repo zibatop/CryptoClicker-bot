@@ -1,16 +1,18 @@
+import vk_api
+from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 import sqlite3
 import os
 import time
-import asyncio
+import random
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("VK_TOKEN")
 
 conn = sqlite3.connect("game.db", check_same_thread=False)
 cur = conn.cursor()
+
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users(
     user_id INTEGER PRIMARY KEY,
@@ -25,7 +27,7 @@ CREATE TABLE IF NOT EXISTS users(
 conn.commit()
 
 def get_user(user_id):
-    user = cur.execute("SELECT * FROM users WHERE user_id=?",(user_id,)).fetchone()
+    user = cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,)).fetchone()
     if not user:
         cur.execute(
             "INSERT INTO users VALUES(?,?,?,?,?,?,?)",
@@ -39,88 +41,86 @@ def is_premium(user):
     return user[6] > int(time.time())
 
 def menu():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("⛏ Майнить", callback_data="click")],
-        [InlineKeyboardButton("🎁 Бонус", callback_data="bonus")],
-        [InlineKeyboardButton("👥 Рефералы", callback_data="ref")],
-        [InlineKeyboardButton("👤 Профиль", callback_data="profile")],
-        [InlineKeyboardButton("🏆 ТОП", callback_data="top")]
-    ])
+    keyboard = VkKeyboard(one_time=False)
+    keyboard.add_button("⛏ Майнить", VkKeyboardColor.PRIMARY)
+    keyboard.add_line()
+    keyboard.add_button("🎁 Бонус", VkKeyboardColor.SECONDARY)
+    keyboard.add_button("👤 Профиль", VkKeyboardColor.SECONDARY)
+    keyboard.add_line()
+    keyboard.add_button("👥 Рефералы", VkKeyboardColor.SECONDARY)
+    keyboard.add_button("🏆 ТОП", VkKeyboardColor.SECONDARY)
+    return keyboard.get_keyboard()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    ref = int(context.args[0]) if context.args else 0
-    user = cur.execute(
-        "SELECT * FROM users WHERE user_id=?",(user_id,)).fetchone()
-    if not user:
-        premium = 0
-        if ref != 0 and ref != user_id:
-            premium = int(time.time()) + 3*86400
+vk_session = vk_api.VkApi(token=TOKEN)
+vk = vk_session.get_api()
+longpoll = VkLongPoll(vk_session)
+
+def send(user_id, text):
+    vk.messages.send(
+        user_id=user_id,
+        message=text,
+        random_id=random.randint(1, 999999),
+        keyboard=menu()
+    )
+
+print("TOKEN")
+
+for event in longpoll.listen():
+    if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+        user_id = event.user_id
+        text = event.text.lower()
+
+        user = get_user(user_id)
+
+        if text == "старт":
+            send(user_id, "🎮 Добро пожаловать!")
+
+        elif text == "⛏ майнить":
+            power = user[2]
+            if is_premium(user):
+                power *= 2
+
+            coins = user[1] + power
+
             cur.execute(
-                "UPDATE users SET coins = coins + 500 WHERE user_id=?",(ref,))
-        cur.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)",(user_id, 0, 1, 0, 0, ref, premium))
-        conn.commit()
-    await update.message.reply_text(
-        "🎮 Добро пожаловать",
-        reply_markup=menu()
-    )
+                "UPDATE users SET coins=? WHERE user_id=?",
+                (coins, user_id)
+            )
+            conn.commit()
 
-async def click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = get_user(query.from_user.id)
-    power = user[2]
-    if is_premium(user):
-        power *= 2
-    coins = user[1] + power
-    cur.execute(
-        "UPDATE users SET coins=? WHERE user_id=?",(coins, query.from_user.id))
-    conn.commit()
-    text = f"⛏ +{power} монет\n💰 Баланс: {coins}"
-    if is_premium(user):
-        text += "\n⭐ ПРЕМИУМ x2"
-    await query.edit_message_text(text, reply_markup=menu())
+            msg = f"⛏ +{power} монет\n💰 Баланс: {coins}"
+            if is_premium(user):
+                msg += "\n⭐ ПРЕМИУМ x2"
 
-async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user = get_user(query.from_user.id)
-    text = (
-        f"👤 Профиль\n\n"
-        f"💰 Монеты: {user[1]}\n"
-        f"⚡ Клик: {user[2]}\n"
-        f"🤖 Роботы: {user[3]}\n"
-    )
-    if is_premium(user):
-        days = (user[6] - int(time.time())) // 86400
-        text += f"⭐ Премиум: {days} дн."
-    await query.edit_message_text(text, reply_markup=menu())
+            send(user_id, msg)
 
-async def ref(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    link = f"https://t.me/{context.bot.username}?start={user_id}"
-    await query.edit_message_text(
-        f"👥 Твоя ссылка:\n{link}",
-        reply_markup=menu()
-    )
+        elif text == "👤 профиль":
+            msg = (
+                f"👤 Профиль\n\n"
+                f"💰 Монеты: {user[1]}\n"
+                f"⚡ Клик: {user[2]}\n"
+                f"🤖 Роботы: {user[3]}\n"
+            )
 
-async def top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    users = cur.execute("SELECT user_id, coins FROM users ORDER BY coins DESC LIMIT 10").fetchall()
-    text = "🏆 ТОП\n\n"
-    i = 1
-    for u in users:
-        text += f"{i}. {u[0]} — {u[1]} 💰\n"
-        i += 1
-    await query.edit_message_text(text, reply_markup=menu())
-async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(click,"click"))
-    app.add_handler(CallbackQueryHandler(profile, pattern="profile"))
-    app.add_handler(CallbackQueryHandler(ref, pattern="ref"))
-    app.add_handler(CallbackQueryHandler(top, pattern="top"))
-    print("Bot started")
-    app.run_polling()
-    
-    if __name__ == "main":
-        main()
+            if is_premium(user):
+                days = (user[6] - int(time.time())) // 86400
+                msg += f"⭐ Премиум: {days} дн."
+
+            send(user_id, msg)
+
+        elif text == "🏆 топ":
+            users = cur.execute(
+                "SELECT user_id, coins FROM users ORDER BY coins DESC LIMIT 10"
+            ).fetchall()
+
+            msg = "🏆 ТОП\n\n"
+            i = 1
+            for u in users:
+                msg += f"{i}. id{u[0]} — {u[1]} 💰\n"
+                i += 1
+
+            send(user_id, msg)
+
+        elif text == "👥 рефералы":
+            link = f"https://vk.me/YOUR_BOT_ID?ref={user_id}"
+            send(user_id, f"👥 Твоя ссылка:\n{link}")
